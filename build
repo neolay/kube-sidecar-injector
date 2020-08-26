@@ -1,0 +1,5 @@
+CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o kube-sidecar-injector .
+docker build --no-cache -t 127.0.0.1:5080/kube-sidecar-injector:v2 .
+rm -rf kube-sidecar-injector
+
+docker push 127.0.0.1:5080/kube-sidecar-injector:v2

@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sidecar-injector-webhook-configmap
+  namespace: kube-sidecar-injector
+data:
+  sidecarconfig.yaml: |
+    containers:
+      - name: network-delay-sidecar
+        image: 127.0.0.1:5080/network-delay-exec:v1
+        imagePullPolicy: Always
+        ports:
+          - name: sidecar-server
+            containerPort: 2332
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sidecar-injector-webhook-deployment
+  namespace: kube-sidecar-injector
+  labels:
+    app: sidecar-injector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sidecar-injector
+  template:
+    metadata:
+      labels:
+        app: sidecar-injector
+    spec:
+      containers:
+        - name: sidecar-injector
+          image: 127.0.0.1:5080/kube-sidecar-injector:v2
+          imagePullPolicy: IfNotPresent
+          args:
+            - -sidecarCfgFile=/etc/webhook/config/sidecarconfig.yaml
+            - -tlsCertFile=/etc/webhook/certs/cert.pem
+            - -tlsKeyFile=/etc/webhook/certs/key.pem
+            - -alsologtostderr
+            - -v=4
+            - 2>&1
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+            - name: webhook-config
+              mountPath: /etc/webhook/config
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: sidecar-injector-webhook-certs
+        - name: webhook-config
+          configMap:
+            name: sidecar-injector-webhook-configmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sidecar-injector-webhook-svc
+  namespace: kube-sidecar-injector
+  labels:
+    app: sidecar-injector
+spec:
+  ports:
+    - port: 443
+      targetPort: 8443
+  selector:
+    app: sidecar-injector
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: sidecar-injector-webhook-cfg
+  labels:
+    app: sidecar-injector
+webhooks:
+  - name: sidecar-injector.mutating.webhook
+    clientConfig:
+      service:
+        name: sidecar-injector-webhook-svc
+        namespace: kube-sidecar-injector
+        path: "/mutate"
+      caBundle: ${CA_BUNDLE}
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["apps", ""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    namespaceSelector:
+      matchLabels:
+        sidecar-injection: enabled
